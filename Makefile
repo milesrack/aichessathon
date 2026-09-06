@@ -12,7 +12,7 @@ arena:
 	uv run python -m harness.arena --opponent baselines/greedy
 
 zip:
-	uv run python -m harness.package
+	uv run python -m harness.package --out agent.zip
 
 test:
 	uv run python -m unittest discover -s tests -v

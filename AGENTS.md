@@ -83,7 +83,7 @@ and they change, so fetch them before you rely on a number.
 ```
 make play      # one game against a baseline, real time control
 make arena     # 16 fast games against a baseline, with a score and an interval
-make zip       # build submission.zip, then smoke it the way the platform does
+make zip       # build agent.zip, then smoke it the way the platform does
 make gate      # ruff, mypy, and two games that have to finish cleanly
 ```
 

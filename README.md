@@ -48,7 +48,7 @@ make test                 # Search, draw handling, special moves and interruptio
 make gate                 # Ruff, strict mypy, tests and two fast games against random
 make play                 # One game against greedy at 120 s + 0.5 s
 make arena                # Sixteen paired games against greedy at 10 s + 0.1 s
-make zip                  # Build submission.zip and play two short games from its contents
+make zip                  # Build agent.zip and play two short games from its contents
 ```
 
 For the stronger supplied baseline:
