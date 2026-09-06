@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-.PHONY: setup play arena zip gate
+.PHONY: setup play arena zip test gate
 
 setup:
 	uv sync
@@ -14,7 +14,11 @@ arena:
 zip:
 	uv run python -m harness.package
 
+test:
+	uv run python -m unittest discover -s tests -v
+
 gate:
 	uv run ruff check .
 	uv run mypy
+	$(MAKE) test
 	uv run python -m harness.arena --opponent baselines/random --games 2 --base-ms 5000
