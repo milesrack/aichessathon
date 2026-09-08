@@ -13,7 +13,8 @@ make play
 ```
 
 Requires [uv](https://docs.astral.sh/uv/). Python is pinned to 3.12. The lockfile includes the
-competition's supported packages; this engine uses only `python-chess` and the standard library.
+competition's supported packages; this engine uses NumPy, Numba, `python-chess` and the standard
+library.
 
 ## Engine
 
@@ -27,19 +28,22 @@ def get_move(fen: str, time_left_ms: int) -> str:
 The engine implements:
 
 - Iterative deepening with principal variation search and alpha–beta bounds.
+- Original move generation, reversible board updates, evaluation and recursive search compiled
+  by Numba. The board uses sixteen-slot rows with off-board padding.
 - Quiescence search with check evasions, captures and all promotion choices.
 - A bounded transposition table, capture ordering, killer moves and quiet-move history.
 - Tapered material and piece-square evaluation, pawn structure, passed pawns, rook files,
   bishop pairs and king shelter.
-- Opponent-move reconstruction to retain repetition history between calls. Cached scores
-  require matching repetition history, halfmove count and game ply.
-- A soft budget for starting another iteration and a hard deadline checked at every search
-  node. Interrupted searches restore the board and retain the last completed move; very short
+- Opponent-move reconstruction to retain repetition history between calls. Cached scores check
+  position and reversible-history hashes, halfmove count and game ply.
+- A soft budget for starting another iteration and a deadline checked every 256 search nodes.
+  Interrupted searches restore the board and retain the last completed move; very short
   clocks use a legal fallback.
 
 Search runs inside `get_move`. There are no background workers, runtime downloads, external
-engines, neural networks or lookup data. This first implementation searches through
-`python-chess` in Python; move generation and evaluation remain the main optimisation targets.
+engines, neural networks or lookup data. Compilation runs at import using the same signatures
+used during play. `python-chess` parses incoming positions, reconstructs game history and checks
+the chosen root move; the search itself stays in compiled code.
 
 ## Verification
 
@@ -59,12 +63,17 @@ uv run python -m harness.arena --opponent baselines/minimax --games 2 \
   --base-ms 120000 --increment-ms 500 --pgn-dir games-full
 ```
 
-The first local run on 6 September 2026 scored **16 wins, no draws and no losses** against the
-supplied two-ply minimax baseline at 10 s + 0.1 s, playing both colours from each of eight sample
-openings. Every game ended in checkmate. This measures baseline performance on the development
-machine; it does not establish a competition Elo or performance on the platform's CPU.
+On 7 September 2026, the compiled candidate scored **16 wins, no draws and no losses** against
+our original submitted engine at 3 s + 0.1 s, playing both colours from each of eight sample
+openings. Every game ended in checkmate. These are local results against our earlier version,
+not a competition Elo or a measurement on the platform's CPU.
 
-A further pair from the English Opening at 120 s + 0.5 s also finished in two checkmate wins.
+Confirmation on four other openings at 10 s + 0.1 s scored seven wins and one draw. A further
+Ruy Lopez pair at 120 s + 0.5 s scored one win and one draw. Across these 26 games against the
+original submission: **24 wins, two draws, no losses**, with no runtime or clock failures.
+
+Correctness checks include standard perft totals, move generation and state transitions compared
+with `python-chess`, special moves, draw-sensitive cache use, mate distance and interrupted search.
 
 The harness reuses opening positions and seeded baseline tie-breaks. Our wall-clock search can
 finish at different depths between runs, so its results are not guaranteed to replay exactly.
