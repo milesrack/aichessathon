@@ -1,7 +1,7 @@
 # Prompt and Circumstance
 
-An original classical chess engine for [AI Chessathon](https://aichessathon.com), maintained by
-Miles Rack. The submission is `agent.py`; the local harness and baselines come from
+An original chess engine with trained neural evaluation for [AI Chessathon](https://aichessathon.com),
+maintained by Miles Rack. The submission contains `agent.py` and its weights; the harness comes from
 [Advit Arora's starter](https://github.com/advitrocks9/aichessathon-starter).
 
 ```sh
@@ -33,7 +33,8 @@ The engine implements:
 - Quiescence search with check evasions, captures and all promotion choices.
 - A bounded transposition table, capture ordering, killer moves and quiet-move history.
 - Tapered material and piece-square evaluation, pawn structure, passed pawns, rook files,
-  bishop pairs and king shelter.
+  bishop pairs and king shelter, plus a trained residual evaluator. Cached feature sums
+  avoid recomputing the entire network at each evaluated position.
 - Opponent-move reconstruction to retain repetition history between calls. Cached scores check
   position and reversible-history hashes, halfmove count and game ply.
 - A soft budget for starting another iteration and a deadline checked every 256 search nodes.
@@ -41,9 +42,10 @@ The engine implements:
   clocks use a legal fallback.
 
 Search runs inside `get_move`. There are no background workers, runtime downloads, external
-engines, neural networks or lookup data. Compilation runs at import using the same signatures
-used during play. `python-chess` parses incoming positions, reconstructs game history and checks
-the chosen root move; the search itself stays in compiled code.
+engines or position-score lookup data. Weights load and compilation runs at import using the
+same signatures used during play. `python-chess` parses incoming positions, reconstructs history and checks
+the chosen root move; the search itself stays in compiled code. The model was trained from
+random weights in PyTorch and exported for Numba inference. See [training](training/README.md).
 
 ## Verification
 
@@ -63,17 +65,18 @@ uv run python -m harness.arena --opponent baselines/minimax --games 2 \
   --base-ms 120000 --increment-ms 500 --pgn-dir games-full
 ```
 
-On 7 September 2026, the compiled candidate scored **16 wins, no draws and no losses** against
-our original submitted engine at 3 s + 0.1 s, playing both colours from each of eight sample
-openings. Every game ended in checkmate. These are local results against our earlier version,
-not a competition Elo or a measurement on the platform's CPU.
+On 7–8 September 2026, the neural candidate scored **10 wins, three draws and three losses**
+against the submitted compiled engine at `a3c1cd0`. Eight games used 3 s + 0.1 s; eight used
+10 s + 0.1 s from four additional openings. Every opening was played with both colours.
 
-Confirmation on four other openings at 10 s + 0.1 s scored seven wins and one draw. A further
-Ruy Lopez pair at 120 s + 0.5 s scored one win and one draw. Across these 26 games against the
-original submission: **24 wins, two draws, no losses**, with no runtime or clock failures.
+A separate comparison against an improved classical search scored **10 wins, two draws and
+four losses** in 16 games at 10 s + 0.1 s. No game in either comparison failed through an
+illegal move, crash or clock overrun. These are local results, not competition Elo or a
+measurement on the platform CPU. See [the research record](docs/evaluator-research.md).
 
 Correctness checks include standard perft totals, move generation and state transitions compared
-with `python-chess`, special moves, draw-sensitive cache use, mate distance and interrupted search.
+with `python-chess`, special moves, draw-sensitive cache use, mate distance, interrupted search
+and neural-cache agreement with full recomputation.
 
 The harness reuses opening positions and seeded baseline tie-breaks. Our wall-clock search can
 finish at different depths between runs, so its results are not guaranteed to replay exactly.
@@ -81,8 +84,8 @@ Rated opening positions are unpublished; the eight local openings are only a sam
 
 ## Packaging and platform rules
 
-`make zip` currently packages only `agent.py` at the archive root. The packager also discovers
-root-level Python files, imported local packages and `weights/` when present. Keep scratch work
+`make zip` packages `agent.py` at the archive root and `weights/evaluator.npz`. The packager also
+discovers root-level Python files, imported local packages and `weights/` when present. Keep scratch work
 in the ignored `.agents/` directory. Additional assets need an explicit `--include` argument.
 The smoke check extracts the archive and runs two short games from it.
 

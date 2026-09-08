@@ -6,6 +6,7 @@ Moves pack origin, destination and promotion into 7, 7 and 3 bits respectively.
 
 import time
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any, NamedTuple, cast
 
 import chess
@@ -44,6 +45,15 @@ for sq in range(128):
 ZOBRIST = np.random.default_rng(18271).integers(1, 2**63 - 1, (14, 128), dtype=np.int64)
 
 
+with np.load(Path(__file__).parent / "weights" / "evaluator.npz", allow_pickle=False) as weights:
+    NN_EMBED = weights["embedding"].astype(np.float64)
+    NN_OUT = weights["output"].astype(np.float64)
+if NN_EMBED.shape != (769, 32) or NN_OUT.shape != (32,):
+    raise ValueError("Unexpected evaluator dimensions")
+if not np.isfinite(NN_EMBED).all() or not np.isfinite(NN_OUT).all():
+    raise ValueError("Evaluator weights must be finite")
+
+
 class Work(NamedTuple):
     """Fixed buffers shared by compiled calls; array rows are indexed by search ply.
 
@@ -51,6 +61,7 @@ class Work(NamedTuple):
     Undo: the seven state fields, captured square, captured piece, moving piece.
     Table: depth, score, bound, move, halfmoves, game ply, reversible-history hash.
     Stats: visited nodes, stop flag, completed root move, root history length.
+    Neural buffers remember the last evaluated board, which can differ from the search board.
     """
 
     board: Array
@@ -64,6 +75,35 @@ class Work(NamedTuple):
     killers: Array
     history: Array
     stats: Array
+    nn_previous: Array
+    nn_hidden: NDArray[np.float64]
+
+
+@compiled
+def residual(w: Work) -> float:
+    # Cache the last evaluated board. Only changed piece features alter the sums.
+    for square in range(128):
+        if square & 0x88 or w.board[square] == w.nn_previous[square]:
+            continue
+        for old in range(2):
+            piece = w.nn_previous[square] if old else w.board[square]
+            if not piece:
+                continue
+            for view in range(2):
+                side = 1 if view == 0 else -1
+                relative = square if side > 0 else square ^ 112
+                feature = (abs(piece) - 1) * 64 + relative // 16 * 8 + relative % 16
+                if piece * side < 0:
+                    feature += 384
+                for neuron in range(32):
+                    w.nn_hidden[view, neuron] += NN_EMBED[feature, neuron] * (-1 if old else 1)
+        w.nn_previous[square] = w.board[square]
+    result = 0.0
+    for neuron in range(32):
+        result += (max(0.0, w.nn_hidden[0, neuron]) - max(0.0, w.nn_hidden[1, neuron])) * NN_OUT[
+            neuron
+        ]
+    return float(200.0 * np.tanh(result / 2.0) * w.state[0])
 
 
 @compiled
@@ -415,7 +455,7 @@ def search(w: Work, depth: int, alpha: int, beta: int, ply: int, deadline: float
     original = alpha
     best = -INF
     if depth <= 0 and not in_check:
-        best = evaluate(board, state)
+        best = int(evaluate(board, state) + residual(w))
         if best >= beta:
             return best
         alpha = max(alpha, best)
@@ -532,6 +572,8 @@ def workspace(position: chess.Board) -> Work:
         np.zeros((LIMIT, 2), dtype=np.int64),
         np.zeros((2, 128, 128), dtype=np.int64),
         np.array([0, 0, 0, 1], dtype=np.int64),
+        np.zeros(128, dtype=np.int64),
+        np.zeros((2, 32), dtype=np.float64),
     )
 
 
