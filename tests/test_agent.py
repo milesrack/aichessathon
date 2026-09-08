@@ -9,6 +9,7 @@ import unittest
 import chess
 import numpy as np
 
+import agent
 from agent import (
     INF,
     MATE,
@@ -220,6 +221,50 @@ class SearchTests(unittest.TestCase):
             move = engine.get_move(chess.STARTING_FEN, 10)
         self.assertIn(chess.Move.from_uci(move), chess.Board().legal_moves)
         self.assertEqual(engine.work.stats[0], 0)
+
+    def test_neural_cache_matches_full_recomputation(self) -> None:
+        positions = []
+        for fen in (
+            chess.STARTING_FEN,
+            "r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1",
+            "k7/8/8/3pP3/8/8/8/4K3 w - d6 0 1",
+            "8/P1k5/8/8/8/8/5K1p/8 w - - 0 1",
+        ):
+            board = chess.Board(fen)
+            positions.append(board.copy())
+            for move in board.legal_moves:
+                child = board.copy()
+                child.push(move)
+                positions.append(child)
+        board = chess.Board()
+        randomiser = random.Random(9381)
+        for _ in range(150):
+            if board.is_game_over():
+                board = chess.Board()
+            board.push(randomiser.choice(list(board.legal_moves)))
+            positions.append(board.copy())
+        positions.extend(reversed(positions.copy()))
+        work = workspace(chess.Board())
+        for board in positions:
+            encoded, state = encode(board)
+            work.board[:] = encoded
+            work.state[:] = state
+            hidden = []
+            for colour in (chess.WHITE, chess.BLACK):
+                indices = [
+                    (piece.piece_type - 1) * 64
+                    + (square if colour else square ^ 56)
+                    + (0 if piece.color == colour else 384)
+                    for square, piece in board.piece_map().items()
+                ]
+                hidden.append(np.maximum(agent.NN_EMBED[indices].sum(axis=0), 0))
+            expected = float(200 * np.tanh((hidden[0] - hidden[1]) @ agent.NN_OUT / 2))
+            expected *= 1 if board.turn else -1
+            self.assertAlmostEqual(agent.residual(work), expected, places=7)
+            np.testing.assert_array_equal(work.board, encoded)
+            np.testing.assert_array_equal(work.state, state)
+            work.state[0] *= -1
+            self.assertAlmostEqual(agent.residual(work), -expected, places=7)
 
 
 if __name__ == "__main__":

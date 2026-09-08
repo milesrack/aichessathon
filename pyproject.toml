@@ -22,7 +22,7 @@ url = "https://download.pytorch.org/whl/cpu"
 explicit = true
 
 [dependency-groups]
-dev = ["mypy>=1.18", "ruff>=0.14"]
+dev = ["mypy>=1.18", "ruff>=0.14", "zstandard>=0.23"]
 
 [tool.ruff]
 line-length = 100
@@ -34,4 +34,4 @@ ignore = ["N818"]
 
 [tool.mypy]
 strict = true
-files = ["agent.py", "harness", "tests"]
+files = ["agent.py", "harness", "tests", "training"]
