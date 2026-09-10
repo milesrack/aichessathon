@@ -53,6 +53,71 @@ def score(work: Work, depth: int) -> int:
 
 
 class SearchTests(unittest.TestCase):
+    def test_null_bound_is_not_reported_as_a_proven_mate(self) -> None:
+        work = workspace(chess.Board("7k/7p/5K2/8/8/8/8/6RQ w - - 0 1"))
+        value = search(work, 5, 0, 1, 1, time.monotonic() + 10)
+        self.assertGreaterEqual(value, 1)
+        self.assertLess(value, MATE - 256)
+
+    def test_synthetic_search_keeps_game_cache_unchanged(self) -> None:
+        work = workspace(chess.Board())
+        score(work, 2)
+        slot = position_hash(work.board, work.state) & (len(work.table_keys) - 1)
+        work.table[slot, 1] = 12345
+        before = work.table.copy(), work.table_keys.copy()
+        result = search(work, 2, -INF, INF, 0, time.monotonic() + 10, True, False)
+        self.assertNotEqual(result, 12345)
+        np.testing.assert_array_equal(work.table, before[0])
+        np.testing.assert_array_equal(work.table_keys, before[1])
+
+    def test_interrupted_null_probe_restores_en_passant_and_side(self) -> None:
+        work = workspace(chess.Board("7k/8/8/3pP3/8/8/3Q4/4K3 w - d6 0 1"))
+        before = work.board.copy(), work.state.copy()
+        work.stats[0] = 254
+        search(work, 3, -1, 0, 1, time.monotonic() - 1)
+        self.assertEqual(work.stats[1], 1)
+        np.testing.assert_array_equal(work.board, before[0])
+        np.testing.assert_array_equal(work.state, before[1])
+
+    def test_pawn_endgame_search_does_not_use_null_pruning(self) -> None:
+        position = chess.Board("8/8/8/8/2k5/2p5/2K5/8 w - - 0 1")
+        self.assertFalse(position.is_game_over())
+        enabled, disabled = workspace(position), workspace(position)
+        expected = search(disabled, 5, -1001, -1000, 1, time.monotonic() + 10, False, False)
+        actual = search(enabled, 5, -1001, -1000, 1, time.monotonic() + 10, False, True)
+        self.assertEqual(actual, expected)
+        self.assertEqual(enabled.stats[0], disabled.stats[0])
+
+    def test_tactical_generation_matches_legal_captures_and_promotions(self) -> None:
+        rng = random.Random(19823)
+        positions = [chess.Board(fen) for fen in (
+            chess.STARTING_FEN,
+            "7k/5Q2/6K1/8/8/8/8/8 b - - 0 1",
+            "k3r3/8/8/3pP3/8/8/8/4K3 w - d6 0 1",
+            "k7/8/8/3pP3/8/8/8/4K3 w - d6 0 1",
+            "1r5k/P7/8/8/8/8/8/6K1 w - - 0 1",
+        )]
+        board = chess.Board()
+        for _ in range(500):
+            if board.is_game_over():
+                board.reset()
+            board.push(rng.choice(list(board.legal_moves)))
+            if not board.is_check():
+                positions.append(board.copy())
+        for position in positions:
+            work = workspace(position)
+            before = work.board.copy(), work.state.copy()
+            count = generate(work.board, work.state, work.moves[0], work.undo[0], True)
+            legal = list(position.legal_moves)
+            expected = {m for m in legal if position.is_capture(m) or m.promotion}
+            self.assertEqual(count == -1, not legal, position.fen())
+            self.assertEqual(
+                {decode(int(m)) for m in work.moves[0, :max(0, count)]}, expected,
+                position.fen(),
+            )
+            np.testing.assert_array_equal(work.board, before[0])
+            np.testing.assert_array_equal(work.state, before[1])
+
     def test_standard_perft_totals_and_state_restoration(self) -> None:
         cases = (
             (chess.STARTING_FEN, 4, 197281),

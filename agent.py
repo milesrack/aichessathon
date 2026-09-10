@@ -201,7 +201,10 @@ def append_move(moves: Array, count: int, origin: int, target: int, pawn: bool) 
 
 
 @compiled
-def generate(board: Array, state: Array, moves: Array, undo: Array) -> int:
+def generate(
+    board: Array, state: Array, moves: Array, undo: Array, tactical: bool = False
+) -> int:
+    """Generate legal moves; tactical mode returns -1 only when no legal move exists."""
     count = 0
     colour = state[0]
     for origin in range(128):
@@ -256,12 +259,29 @@ def generate(board: Array, state: Array, moves: Array, undo: Array) -> int:
     legal = 0
     for i in range(count):
         move = moves[i]
+        if tactical:
+            origin, target = move & 127, (move >> 7) & 127
+            if not (
+                move >> 14 or board[target] or (abs(board[origin]) == 1 and target == state[2])
+            ):
+                continue
         make(board, state, move, undo)
         valid = not attacked(board, state[4 if colour > 0 else 5], -colour)
         unmake(board, state, move, undo)
         if valid:
             moves[legal] = move
             legal += 1
+    if tactical and legal == 0:
+        # No tactical move proved that the position is live. Stop at the first
+        # legal quiet move, rather than checking every discarded move at a leaf.
+        for i in range(count):
+            move = moves[i]
+            make(board, state, move, undo)
+            valid = not attacked(board, state[4 if colour > 0 else 5], -colour)
+            unmake(board, state, move, undo)
+            if valid:
+                return 0
+        return -1
     return legal
 
 
@@ -399,7 +419,16 @@ def evaluate(board: Array, state: Array) -> int:
 
 
 @compiled
-def search(w: Work, depth: int, alpha: int, beta: int, ply: int, deadline: float) -> int:
+def search(
+    w: Work,
+    depth: int,
+    alpha: int,
+    beta: int,
+    ply: int,
+    deadline: float,
+    null_line: bool = False,
+    allow_null: bool = True,
+) -> int:
     w.stats[0] += 1
     # Re-enter Python only for the clock; move generation and recursion stay compiled.
     if w.stats[0] & 255 == 0:
@@ -410,9 +439,10 @@ def search(w: Work, depth: int, alpha: int, beta: int, ply: int, deadline: float
     if w.stats[1]:
         return 0
     board, state = w.board, w.state
-    count = generate(board, state, w.moves[ply], w.undo[ply])
     in_check = attacked(board, state[4 if state[0] > 0 else 5], -state[0])
-    if count == 0:
+    tactical = depth <= 0 and not in_check
+    count = generate(board, state, w.moves[ply], w.undo[ply], tactical)
+    if count == -1 or (count == 0 and not tactical):
         return -MATE + ply if in_check else 0
     key = position_hash(board, state)
     index = w.stats[3] - 1 + ply
@@ -420,7 +450,7 @@ def search(w: Work, depth: int, alpha: int, beta: int, ply: int, deadline: float
     repeats = 1
     start = max(0, index - state[3])
     for past in range(index - 2, start - 1, -2):
-        if w.path[past] == key:
+        if not null_line and w.path[past] == key:
             repeats += 1
     if repeats >= 3 or state[3] >= 100 or state[6] >= 600 or insufficient(board):
         return 0
@@ -433,7 +463,7 @@ def search(w: Work, depth: int, alpha: int, beta: int, ply: int, deadline: float
         context = (context ^ w.path[past]) * np.int64(6364136223846793005)
     slot = key & (SIZE - 1)
     hint = 0
-    if w.table_keys[slot] == key:
+    if not null_line and w.table_keys[slot] == key:
         hint = w.table[slot, 3]
         if (
             depth > 0
@@ -452,6 +482,39 @@ def search(w: Work, depth: int, alpha: int, beta: int, ply: int, deadline: float
                 if ply == 0:
                     w.stats[2] = hint
                 return int(cached)
+    # A synthetic pass is a selective lower-bound probe, never a real history
+    # position. Its descendants cannot read or write cached game scores.
+    if (
+        allow_null
+        and depth >= 3
+        and ply > 0
+        and beta == alpha + 1
+        and not in_check
+        and state[3] < 80
+        and state[6] < 560
+        and abs(beta) < MATE - 256
+    ):
+        non_pawn = False
+        for square in range(128):
+            if (
+                not square & 0x88
+                and board[square] * state[0] > 0
+                and abs(board[square]) in (2, 3, 4, 5)
+            ):
+                non_pawn = True
+                break
+        if non_pawn and evaluate(board, state) + residual(w) >= beta:
+            ep = state[2]
+            state[0] = -state[0]
+            state[2] = -1
+            value = -search(w, depth - 3, -beta, -beta + 1, ply + 1, deadline, True, False)
+            state[0] = -state[0]
+            state[2] = ep
+            if w.stats[1]:
+                return 0
+            if value >= beta:
+                # Passing cannot prove the mate distance of a legal line.
+                return min(value, MATE - 257)
     original = alpha
     best = -INF
     if depth <= 0 and not in_check:
@@ -491,11 +554,11 @@ def search(w: Work, depth: int, alpha: int, beta: int, ply: int, deadline: float
             continue
         make(board, state, move, w.undo[ply])
         if i == 0 or depth <= 0:
-            score = -search(w, depth - 1, -beta, -alpha, ply + 1, deadline)
+            score = -search(w, depth - 1, -beta, -alpha, ply + 1, deadline, null_line, True)
         else:
-            score = -search(w, depth - 1, -alpha - 1, -alpha, ply + 1, deadline)
+            score = -search(w, depth - 1, -alpha - 1, -alpha, ply + 1, deadline, null_line, True)
             if alpha < score < beta and not w.stats[1]:
-                score = -search(w, depth - 1, -beta, -alpha, ply + 1, deadline)
+                score = -search(w, depth - 1, -beta, -alpha, ply + 1, deadline, null_line, True)
         unmake(board, state, move, w.undo[ply])
         if w.stats[1]:
             return 0
@@ -512,7 +575,7 @@ def search(w: Work, depth: int, alpha: int, beta: int, ply: int, deadline: float
                     800000, w.history[c, origin, target] + depth * depth
                 )
             break
-    if depth > 0:
+    if depth > 0 and not null_line:
         w.table_keys[slot] = key
         w.table[slot, 0] = depth
         w.table[slot, 1] = (
