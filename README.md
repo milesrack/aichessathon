@@ -31,6 +31,8 @@ The engine implements:
 - Original move generation, reversible board updates, evaluation and recursive search compiled
   by Numba. The board uses sixteen-slot rows with off-board padding.
 - Quiescence search with check evasions, captures and all promotion choices.
+- Tactical leaf generation with a separate stalemate check, and guarded null-move
+  pruning in narrow search windows. Synthetic positions are isolated from game-score caches.
 - A bounded transposition table, capture ordering, killer moves and quiet-move history.
 - Tapered material and piece-square evaluation, pawn structure, passed pawns, rook files,
   bishop pairs and king shelter, plus a trained residual evaluator. Cached feature sums
@@ -76,7 +78,14 @@ measurement on the platform CPU. See [the research record](docs/evaluator-resear
 
 Correctness checks include standard perft totals, move generation and state transitions compared
 with `python-chess`, special moves, draw-sensitive cache use, mate distance, interrupted search
-and neural-cache agreement with full recomputation.
+and neural-cache agreement with full recomputation. Null-move checks cover interrupted state
+restoration, pawn endings, cache isolation and keeping speculative bounds outside mate scores.
+
+On 9 September, the guarded search candidate scored **11 wins, seven draws and six losses**
+against the submitted neural engine across 24 paired games: 16 at 3 s + 0.1 s and eight
+from different starting positions at 10 s + 0.1 s. An additional late-move reduction was
+not selected. The final 120 s + 0.5 s pair scored zero wins, one draw and one loss;
+the short-clock gain is not established at competition clocks. See [the rated-game review](docs/rated-game-review.md) for the evidence and limits.
 
 The harness reuses opening positions and seeded baseline tie-breaks. Our wall-clock search can
 finish at different depths between runs, so its results are not guaranteed to replay exactly.

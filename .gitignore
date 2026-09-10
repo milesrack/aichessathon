@@ -4,5 +4,7 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 agent.zip
+agents.zip
+artifacts/
 *.pgn
 .DS_Store
