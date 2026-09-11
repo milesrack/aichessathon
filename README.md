@@ -1,7 +1,8 @@
 # Prompt and Circumstance
 
 An original chess engine with trained neural evaluation for [AI Chessathon](https://aichessathon.com),
-maintained by Miles Rack. The submission contains `agent.py` and its weights; the harness comes from
+maintained by Miles Rack. The submission contains the engine source, trained weights, opening book and endgame tables;
+the harness comes from
 [Advit Arora's starter](https://github.com/advitrocks9/aichessathon-starter).
 
 ```sh
@@ -16,6 +17,10 @@ Requires [uv](https://docs.astral.sh/uv/). Python is pinned to 3.12. The lockfil
 competition's supported packages; this engine uses NumPy, Numba, `python-chess` and the standard
 library.
 
+This branch contains an **unsubmitted candidate**. Its full-clock comparison
+was 3 wins, 1 draw and 4 losses; an improvement over v5 is not established.
+See [delivery status and evidence](docs/final-build.md).
+
 ## Engine
 
 The platform imports `agent.py` and calls:
@@ -27,6 +32,8 @@ def get_move(fen: str, time_left_ms: int) -> str:
 
 The engine implements:
 
+- A local opening book through move 20 and three- and four-piece Syzygy endgames,
+  with legality, repetition and draw-counter guards. See [the final-build record](docs/final-build.md).
 - Iterative deepening with principal variation search and alpha–beta bounds.
 - Original move generation, reversible board updates, evaluation and recursive search compiled
   by Numba. The board uses sixteen-slot rows with off-board padding.
@@ -93,7 +100,8 @@ Rated opening positions are unpublished; the eight local openings are only a sam
 
 ## Packaging and platform rules
 
-`make zip` packages `agent.py` at the archive root and `weights/evaluator.npz`. The packager also
+`make zip` packages `agent.py`, `repertoire.py` and the contents of `weights/`.
+The packager also
 discovers root-level Python files, imported local packages and `weights/` when present. Keep scratch work
 in the ignored `.agents/` directory. Additional assets need an explicit `--include` argument.
 The smoke check extracts the archive and runs two short games from it.
