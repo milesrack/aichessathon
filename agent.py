@@ -14,6 +14,8 @@ import numpy as np
 from numba import njit, objmode
 from numpy.typing import NDArray
 
+from repertoire import endgame_move, opening_move
+
 Array = NDArray[np.int64]
 
 
@@ -201,9 +203,7 @@ def append_move(moves: Array, count: int, origin: int, target: int, pawn: bool) 
 
 
 @compiled
-def generate(
-    board: Array, state: Array, moves: Array, undo: Array, tactical: bool = False
-) -> int:
+def generate(board: Array, state: Array, moves: Array, undo: Array, tactical: bool = False) -> int:
     """Generate legal moves; tactical mode returns -1 only when no legal move exists."""
     count = 0
     colour = state[0]
@@ -691,6 +691,18 @@ class Engine:
         w.stats[:] = (0, 0, 0, len(history))
         w.history.fill(0)
         w.killers.fill(0)
+        prepared = None
+        source = "tablebase"
+        if time_left_ms > 200:
+            prepared = endgame_move(board)
+            if prepared is None:
+                prepared = opening_move(board)
+                source = "book"
+        if prepared is not None:
+            board.push(prepared)
+            self.board = board
+            print(f"prepared move source={source}", flush=True)
+            return prepared.uci()
         completed = score = 0
         if len(legal) > 1 and time_left_ms > 20:
             for depth in range(1, LIMIT):
@@ -708,7 +720,8 @@ class Engine:
         self.board = board
         print(
             f"depth={completed} nodes={w.stats[0]} score={score} "
-            f"ms={(time.monotonic() - start) * 1000:.0f}"
+            f"ms={(time.monotonic() - start) * 1000:.0f}",
+            flush=True,
         )
         return best.uci()
 
@@ -719,7 +732,7 @@ _ENGINE = Engine()
 # Exercise the Python clock callback during initialisation too.
 _ENGINE.work.stats[0] = 255
 search(_ENGINE.work, 2, -INF, INF, 0, time.monotonic() + 60)
-print(f"compiled in {time.monotonic() - _started:.2f}s")
+print(f"compiled in {time.monotonic() - _started:.2f}s", flush=True)
 
 
 def get_move(fen: str, time_left_ms: int) -> str:

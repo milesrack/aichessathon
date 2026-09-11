@@ -1,0 +1,15 @@
+{
+  "entries": 757293,
+  "seeds": 6113,
+  "engine": {
+    "name": "Stockfish 19",
+    "author": "the Stockfish developers (see AUTHORS file)"
+  },
+  "analysed": 12000,
+  "seconds_per_position": 0.08,
+  "book_sha256": "f6f09d14c5d7176135136a94092948613038410e46cdf4179dbb2935cc7b1ce9",
+  "dataset_sha256": "3989b7568bcbccf23414bbc0004d2ccadd9325e4613da10600e5e51da96d835a",
+  "analysis_engine_sha256": "8eed61129d1493c5d1f2fd9323f0c54c47ac49319911fbde18c6b9c87e8b13c5",
+  "dataset_url": "https://database.lichess.org/lichess_db_eval.jsonl.zst",
+  "dataset_bytes": 134217728
+}
