@@ -1,7 +1,7 @@
 # AI Chessathon
 
 Chess engine with Numba-compiled search and a residual neural evaluator trained in PyTorch,
-built for [AI Chessathon](https://aichessathon.com).
+built for the [AI Chessathon](https://aichessathon.com).
 
 ## Quick start
 
