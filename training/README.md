@@ -1,17 +1,10 @@
-# Training the evaluator
+# Evaluator training
 
-The released network was trained from random weights on 832,883 quiet positions, with 94,083
-held out. It uses two perspectives, shared 32-dimensional piece-square embeddings and a
-bounded residual relative to the frozen classical evaluator. PyTorch trains the model;
-Numba runs the exported weights during play.
-
-The scripts require the repository environment (`make setup`). `zstandard` is a development
-dependency used only to decompress training data; the submitted agent does not import it.
+Run `make setup` to install the training dependencies.
 
 ## Prepare data
 
-Freeze the classical reference before preparing data. Using the neural engine to filter its
-own training data changes the experiment.
+Use the frozen classical evaluator for quiet-position filtering:
 
 ```sh
 mkdir -p .agents/training/baseline
@@ -23,32 +16,36 @@ uv run python -m training.prepare .agents/training/evals-prefix.zst \
   .agents/training/quiet.npz --baseline .agents/training/baseline
 ```
 
-This uses a bounded prefix of the [CC0 Lichess evaluation export](https://database.lichess.org/#evals),
-not a random sample of the whole database. Filtering keeps valid, non-terminal positions
-outside check, with deep centipawn labels and little difference between static evaluation
-and quiescence search. A canonical feature hash deduplicates positions and assigns the split.
-Related positions can cross partitions because source-game identifiers are unavailable.
+Preparation reads a 128 MiB prefix of the
+[CC0 Lichess evaluation export](https://database.lichess.org/#evals):
 
-Filtering has a 10 ms per-position deadline. Different machines can therefore retain slightly
-different rows. The exact prepared dataset used for the release is retained with the local
-research evidence; use that snapshot when reproducing the weights.
+- Keep valid, non-terminal positions outside check with analysis depth ≥16 and scores within ±1500 cp.
+- Reject positions where classical quiescence and static evaluation differ by more than 40 cp.
+- Deduplicate by canonical features and assign training/validation partitions by hash.
+- Keep opposite perspectives in the same partition.
 
-## Train and compare
+The retained dataset has **832,883 training and 94,083 validation positions**. Source-game
+identifiers are unavailable, so related positions can cross partitions. The upstream export
+can change, and the 10 ms filtering deadline can retain different rows on different machines.
+Exact weight reproduction requires the retained dataset and hashes in the
+[experiment record](../docs/evaluator-research.md).
+
+## Train
 
 ```sh
 uv run python -m training.train .agents/training/quiet.npz \
   .agents/training/evaluator.npz
 ```
 
-The script fixes the seed, architecture, optimiser and 30-epoch schedule. It selects the best
-validation checkpoint and writes the weights plus a JSON record containing dataset and weight
-hashes and per-epoch metrics. It never loads pretrained weights.
+Training uses random initialisation, seed 9371, AdamW and 30 epochs.
 
-A lower validation loss is not grounds to replace `weights/evaluator.npz`. Freeze a candidate
-with the new weights, check inference against PyTorch and full recomputation, then play paired
-equal-clock games against the released agent. Include additional openings and longer clocks
-before packaging. Only the selected `.npz` belongs in `weights/`; datasets, logs and training
-metadata stay in the ignored research directory.
+The best validation checkpoint is exported as `.npz`, alongside JSON metadata containing
+dataset and weight hashes and per-epoch metrics.
 
-See [the experiment results](../docs/evaluator-research.md) for the comparisons that selected
-this model and rejected other candidates.
+## Evaluate
+
+1. Check exported inference against PyTorch and cached sums against full recomputation.
+2. Compare against the reference engine with both colours and equal clocks.
+3. Include additional openings and competition-length clocks before selecting weights.
+
+See [evaluator experiments](../docs/evaluator-research.md) for architecture and results.

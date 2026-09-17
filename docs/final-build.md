@@ -1,109 +1,72 @@
-# Opening and endgame preparation, 10 September 2026
+# Opening book and endgames
 
-The reference is active v5, source `1f08516`, archive SHA-256
-`bde67bd922087e2e8db6b1d2c747539ce829bdd1136067f9c8f30d9a9855fc14`.
-The authenticated dashboard reported rating 1575, rank 234 of 452 and
-26 wins, six draws and 30 losses through round 105. V5's rounds 91–105
-comprised seven wins, one draw and seven losses; the losses were checkmates.
+Implemented in `4643ae0`, on top of v5 (`1f08516`). Search and evaluator weights are unchanged.
+This candidate was packaged locally but not submitted before the competition closed.
 
-## Runtime changes
+## Runtime
 
-`repertoire.py` reads a local Polyglot book only when the incoming FEN's
-fullmove number is at most 20. It checks legality through python-chess,
-avoids repeating a position, and declines positions near the fifty-move limit.
-A miss returns to the existing compiled search and trained evaluator.
+[repertoire.py](../repertoire.py) probes Syzygy endgames, then the Polyglot book, before
+falling back to search. History and search state are initialised before either lookup.
 
-Three- and four-piece Syzygy WDL and DTZ tables provide endgame moves.
-Move selection preserves the result and prefers progress towards a pawn move,
-capture or mate. Actual repetition and draw counters are respected. Missing
-tables or uncertain rounded distances near the fifty-move boundary return to
-search. The engine retains its game history through prepared moves.
+- **Opening book:** legal moves through the incoming FEN's move 20; avoid repetitions and
+  decline lookup when the halfmove counter reaches 80.
+- **Endgames:** three- and four-piece win/draw/loss (WDL) and distance-to-zeroing (DTZ)
+  tables. Preserve the result and prefer progress towards a capture, pawn move or mate.
+- **Fallback:** missing coverage, uncertain DTZ near the fifty-move boundary, or insufficient
+  time returns control to search. Prepared moves are skipped at 200 ms or less.
 
-The middlegame search and trained network are unchanged. Opening lookup cannot
-run at move 21 or later. Tablebase lookup cannot run with more than four pieces.
-The runtime contains no external-engine executable, published neural network,
-network request or subprocess call.
+## Assets
 
-## Data and reproduction
+| Asset | Contents | Bytes |
+| --- | --- | ---: |
+| `weights/openings.bin` | 757,293 Polyglot entries | 12,116,688 |
+| `weights/syzygy/` | 70 files covering 35 material sets | 4,346,080 |
 
-The [current competition rules](https://aichessathon.com/docs/rules.md), fetched
-on 10 September, expressly permit tables answering positions at move 20 or
-below and endgames of at most seven pieces, regardless of what generated them.
+The book starts from a 128 MiB prefix of the
+[CC0 Lichess evaluation export](https://database.lichess.org/#evals). Requiring at least
+24 pieces and analysis depth 20 retained 726,369 position keys from 1,580,923 rows.
 
-The book uses the retained 128 MiB prefix of the
-[CC0 Lichess evaluation export](https://database.lichess.org/#evals), with at
-least 24 pieces and analysis depth at least 20. These filters retained 726,369
-unique position keys from 1,580,923 rows. The completed 12,000-position expansion
-produced 757,293 entries (12,116,688 bytes). The exact data and executable hashes
-are recorded in `opening-book-manifest.json`. Only moves are exported, without
-scores or source engine code. Additional opening analysis uses Stockfish 19
-as an offline development tool, one thread, 128 MiB hash, three variations,
-and 80 ms per position. Its executable and network are not packaged.
+Stockfish 19 expanded 12,000 positions offline: one thread, 128 MiB hash, three variations
+and 80 ms per position. Early positions from public competition PGNs seeded the queue.
+Continuations include up to ten plies, stop at move 20 and require remaining nominal depth
+of at least 12. The book stores moves without scores.
 
-Observed early positions from the retained public competition PGNs seed the
-analysis queue. Up to ten plies of each principal variation are considered;
-alternative root moves are not stored as recommendations. Every continuation
-is bounded by move 20, with a remaining nominal depth of at least 12.
-New rounds 98–105 are excluded from this targeted expansion. The initial
-positions of rounds 98, 99, 100 and 103 were absent from the targeted seed set.
+The tablebase downloader retrieves three- and four-piece files from the Lichess mirror.
+Source URLs and checksums are in the [book manifest](opening-book-manifest.json) and
+[tablebase manifest](tablebase-manifest.json).
+
+## Build
+
+After `make setup`, supply the evaluation prefix, PGN directory and local Stockfish executable:
 
 ```sh
-.venv/bin/python -m training.build_book \
-  --evaluations /private/tmp/chess-research-v3/evaluations-prefix.zst \
-  --games artifacts \
-  --engine /private/tmp/chess-stockfish/stockfish/stockfish-macos-universal \
+uv run python -m training.build_book \
+  --evaluations /path/to/evaluations-prefix.zst \
+  --games /path/to/pgn-directory \
+  --engine /path/to/stockfish \
   --output weights/openings.bin --positions 12000 --seconds 0.08
-.venv/bin/python -m training.fetch_tables
+uv run python -m training.fetch_tables
+make zip
 ```
 
-The tablebase downloader selects every three- and four-piece file from the
-Lichess mirror, totalling 70 files and 4,346,080 bytes. Exact source URLs and
-SHA-256 checksums are recorded in `tablebase-manifest.json`. The book's timed
-analysis is not bitwise reproducible; the released asset checksum identifies
-the actual build.
+Timed analysis is not bitwise reproducible; manifest checksums identify the build.
+
+## Results
+
+Paired games against v5, with equal clocks and four openings per comparison:
+
+| Clock | Wins | Draws | Losses |
+| --- | ---: | ---: | ---: |
+| 3 s + 0.1 s | 7 | 1 | 0 |
+| 120 s + 0.5 s | 3 | 1 | 4 |
+
+The longer comparison used additional openings from rounds 98, 99, 100 and 103, absent from
+the targeted seed set. The short-clock advantage did not persist at the longer time control.
 
 ## Verification
 
-Tests cover the move-20 boundary, castling and underpromotion encoding, missing
-coverage, state restoration, and complete conversion of queen, rook,
-bishop-and-knight and pawn endings. All original search tests remain enabled.
-A separate asset check probed 700 valid positions across all 35 material sets,
-checking colour symmetry and agreement between WDL and DTZ signs.
-
-The completed short-clock screen scored seven wins, one draw and no losses
-against active v5 across four paired openings at 3 s + 0.1 s.
-
-The local runner terminates processes without flushing buffered stdout, so
-prepared-move counts in the initial comparison log are not reliable. PGNs and
-W/D/L outcomes are authoritative for these local games.
-
-The full-clock comparison scored three wins, one draw and four losses across
-eight games from four additional opening positions at 120 s + 0.5 s.
-All games ended normally. This does not establish a competition-clock gain.
-The short-clock result must not be presented as a proven rating improvement.
-
-Diagnostics now flush explicitly so subsequent local and platform runs retain
-them. This changes logging, not chess decisions.
-
-## Delivery status
-
-No replacement was uploaded. Authentication expired, refresh returned
-`refresh_token_already_used`, and the available browser was signed out. A fresh
-cookie was requested. At the final status check on 11 September, 14:37 UTC,
-the user's 11:00 BST submission deadline had passed. The last authenticated
-dashboard showed v5 active; its continued final status has not been verified.
-The local archive is an unsubmitted candidate, not an accepted final entry.
-Local matches do not establish competition Elo or podium strength.
-
-## Local archive
-
-Final Ruff, strict mypy, all 26 tests, two gate games and both extracted-archive
-smoke games passed. The archive contains 74 files and
-16,592,457 bytes unpacked. Every archive member was compared byte for
-byte with its source. The Polyglot records are uniquely keyed and sorted.
-
-Archive SHA-256: `1682ea58a85e0ba2d9382a88513f009b255b7d942b3533aa29ca08733294df1c`.
-
-The root `agent.zip` is this unsubmitted candidate. The exact prior active
-archive is preserved in
-`artifacts/2026-09-10/final-push/baseline-agent.zip`.
+- Tests cover lookup boundaries, move encoding, missing coverage, history preservation and
+  queen, rook, bishop-and-knight and pawn endgame conversion.
+- Asset checks probed 700 valid positions across all 35 material sets for colour symmetry
+  and WDL/DTZ sign agreement.
+- The archive contained 74 files and 16,592,457 unpacked bytes, each matched to its source.

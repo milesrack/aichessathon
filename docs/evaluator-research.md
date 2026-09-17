@@ -1,104 +1,74 @@
-# Evaluator and search experiments
+# Evaluator experiments
 
-Experiments ran on 7–8 September 2026. The reference is the compiled engine at
-`a3c1cd0`, not the original Python engine. Its submitted archive has SHA-256
-`d4461dd5bc7bf8f52e412b2bba166790d047286c260ebcd204690dd749ad26a8`.
+Reference: compiled classical engine `a3c1cd0`. Selected evaluator: `df86be8`.
 
-## Method
+## Architecture and training
 
-Each comparison uses the unmodified harness, equal clocks and both colours from every
-opening. Training and benchmarks run separately from timed matches. The initial screens
-use 3 s + 0.1 s; confirmation uses four other openings at 10 s + 0.1 s. These small local
-comparisons select candidates; they do not establish a competition rating.
+- Sum 32-dimensional piece-square embeddings for each of two perspectives.
+- Apply ReLU and a shared output layer; subtract perspectives to enforce antisymmetry.
+- Apply tanh to bound the correction to the classical score at ±200 centipawns.
+- Train from random weights with AdamW, sigmoid-space squared error, seed 9371 and 30 epochs.
 
-| Candidate | Opponent | Games | Wins / draws / losses |
-| --- | --- | ---: | --- |
-| Quiet-position neural evaluator, small dataset | Reference | 16 | 5 / 1 / 10 |
-| Learnt tapered piece-square corrections | Reference | 16 | 7 / 2 / 7 |
-| Late quiet-move reductions | Reference | 16 | 12 / 0 / 4 |
-| Late quiet-move reductions, confirmation | Reference | 8 | 4 / 1 / 3 |
-| Larger dataset, cached neural evaluation | Reference | 8 | 5 / 2 / 1 |
-| Cached neural evaluation, confirmation | Reference | 8 | 5 / 1 / 2 |
-| Cached neural evaluation, direct comparison at 10 s + 0.1 s | Reductions alone | 16 | 10 / 2 / 4 |
-| Larger dataset, king-conditioned neural evaluation | Reference | 8 | 1 / 3 / 4 |
-| Cached neural evaluation plus reductions | Reductions alone | 8 | 2 / 1 / 5 |
+The dataset came from a 128 MiB prefix of the
+[CC0 Lichess evaluation export](https://database.lichess.org/#evals): 1,580,923 input rows.
+Filtering selected the deepest available analysis at depth 16 or greater, its first principal
+variation's centipawn score within ±1500, and valid non-terminal positions outside check.
+Positions were discarded when classical quiescence differed from static evaluation by more
+than 40 cp or the filtering search timed out.
 
-No game in these comparisons failed through an illegal move, crash or clock overrun.
+Canonical feature deduplication left **832,883 training and 94,083 validation positions**.
+Opposite perspectives share a partition. The prefix is not a random database sample;
+related positions can cross partitions because source-game identifiers are unavailable.
 
-The selected release uses the larger, unconditioned neural evaluator with the original
-search. It scored positively against both classical versions. Combining the network with
-reductions made it weaker, so the reductions are absent from this release. The king-conditioned
-network and learnt-table variant are also excluded.
+Mean validation error was approximately **103 cp**, versus **131 cp** for classical evaluation.
+An eight-region king-conditioned model reached **99 cp** but lost its match comparison.
 
-## Neural training
+## Match results
 
-Every network starts from random weights in PyTorch. The
-[competition rules](https://aichessathon.com/docs/rules.md) permit training on engine-labelled
-positions but prohibit shipping a published chess network, including a fine-tuned one.
+Equal clocks, paired colours and the unmodified harness. Initial screens used 3 s + 0.1 s;
+confirmation used four additional openings at 10 s + 0.1 s. Results are candidate wins/draws/losses.
 
-The data comes from the [CC0 Lichess evaluation export](https://database.lichess.org/#evals).
-A bounded 128 MiB prefix supplied 1,580,923 rows. We select the deepest available analysis
-of at least depth 16, using its first principal variation's centipawn score and excluding
-scores outside ±1500 cp. Invalid positions, checks and terminal positions are excluded.
-Positions whose classical quiescence score differs from static evaluation by more than
-40 cp are also excluded. Interrupted filtering searches are discarded.
+| Candidate | Opponent | W / D / L |
+| --- | --- | --- |
+| Small quiet-position network | Classical reference | 5 / 1 / 10 |
+| Learnt tapered piece-square corrections | Classical reference | 7 / 2 / 7 |
+| Late quiet-move reductions | Classical reference | 12 / 0 / 4 |
+| Reductions, confirmation | Classical reference | 4 / 1 / 3 |
+| Larger cached network | Classical reference | 5 / 2 / 1 |
+| Cached network, confirmation | Classical reference | 5 / 1 / 2 |
+| Cached network, 10 s + 0.1 s | Reductions alone | 10 / 2 / 4 |
+| King-conditioned network | Classical reference | 1 / 3 / 4 |
+| Cached network + reductions | Reductions alone | 2 / 1 / 5 |
 
-Canonical feature deduplication leaves 926,966 quiet positions: 832,883 for training and
-94,083 for validation. Opposite perspectives stay in the same partition. This is a prefix
-sample with a position-based split; source-game identifiers are unavailable, so related
-positions can cross partitions. Competition PGNs are not training data.
+The larger cached network was retained without reductions. It scored **20/5/7** across
+32 games against the two classical versions.
 
-The main network sums 32-dimensional piece-square embeddings, applies ReLU and produces a
-scalar. Subtracting the two perspectives enforces antisymmetry. A tanh bounds its correction
-to the classical score at ±200 cp. Training uses sigmoid-space squared error, AdamW and
-30 epochs, with seed 9371. Neither the sigmoid scale nor the quietness threshold is a
-universal chess constant.
+The reduction experiment searched late quiet moves one ply shallower, excluding checks,
+check evasions, promotions, captures and killers. Moves improving alpha were searched again
+at full depth. Combining it with the neural evaluator weakened the measured result.
 
-The larger model reaches roughly 103 cp mean validation error against 131 cp for the
-classical evaluator on the same set. Conditioning features on eight king-location regions
-reduces this to about 99 cp, but that model loses its match comparison. Lower score error
-is therefore insufficient evidence of better play.
+## Inference checks
 
-## Inference and search
+Numba loads the exported NumPy weights and caches both perspective sums. Only features for
+changed pieces are updated relative to the last evaluated board.
 
-Inference uses our own Numba code, loading the trained NumPy weights at import. It retains
-the last evaluated board and both feature sums, updating only changed piece features.
-Tests compare this cache with full recomputation over 10,000 board transitions. Exported
-inference agrees with PyTorch within 0.001 cp on 200 positions.
+- Cached sums matched full recomputation over 10,000 board transitions.
+- Exported inference agreed with PyTorch within 0.001 cp on 200 positions.
+- An earlier evaluator probe measured 0.825 microseconds per evaluation versus 0.325 for
+  classical evaluation; its depth-five search also visited more nodes.
 
-A probe of the earlier evaluator measured 0.825 microseconds per evaluation versus
-0.325 for classical evaluation. Its sampled depth-five search also visited more nodes.
-Evaluation cost and changes to the search tree both matter when assessing a model.
+## Reproduction
 
-The search experiment reduces late quiet moves by one ply, excluding checks, check evasions,
-promotions, captures and killers. Any reduced search that improves alpha is repeated at
-normal depth. This saves work but can miss a quiet move that appears unpromising at reduced
-depth. Its positive match results justify further use; they do not make selective search exact.
-
-## Research basis
-
-- [Tan and Watkinson Medina](https://arxiv.org/html/2412.17948v1) investigate filtering
-  unstable training positions. Their experiments concern Xiangqi; their measured gains and
-  thresholds cannot be assumed to transfer to this engine.
-- [NNUE training concepts](https://github.com/official-stockfish/nnue-pytorch/blob/master/docs/nnue.md)
-  explain sparse accumulators and sigmoid-space losses. We use the concepts, not an engine
-  implementation, port or published network.
-- [DeepMind's searchless chess work](https://arxiv.org/abs/2402.04494) explores transformers
-  with up to 270 million parameters. That scale is a poor fit for this competition's storage
-  and single-core constraints.
-
-Training scripts, input data, weights, frozen candidates, logs and PGNs are retained locally
-under `.agents/iterations/2026-09-07-neural/`. They are research evidence, not submission assets.
-
-## Reproducibility
-
-The maintained training script reproduces every released weight exactly from the retained
-prepared dataset. Relevant SHA-256 hashes:
+See [training instructions](../training/README.md). The trainer reproduced the released
+weights from the retained prepared dataset. SHA-256 identifiers:
 
 - Source prefix: `3989b7568bcbccf23414bbc0004d2ccadd9325e4613da10600e5e51da96d835a`.
 - Prepared dataset: `e9e44c471525a70eb6799656f844f2839c6a2a799894f349a0f1012a45d64fa6`.
-- Released weights: `caecd4c672ea4a14d8896cb6ed47f2e3755a19cbed94b5a4b9e4fdbdc451a3fd`.
+- Weights: `caecd4c672ea4a14d8896cb6ed47f2e3755a19cbed94b5a4b9e4fdbdc451a3fd`.
 
-See [the training instructions](../training/README.md). The selected neural model's combined
-record is 20 wins, five draws and seven losses across 32 games against the two classical
-versions. No published network, engine or position-score lookup database is shipped.
+## References
+
+- [Tan and Watkinson Medina](https://arxiv.org/html/2412.17948v1): filtering unstable
+  training positions in Xiangqi; motivation for the quiet-position filter.
+- [NNUE training concepts](https://github.com/official-stockfish/nnue-pytorch/blob/master/docs/nnue.md):
+  sparse accumulators and sigmoid-space losses.

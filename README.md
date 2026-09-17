@@ -1,121 +1,69 @@
-# Prompt and Circumstance
+# AI Chessathon
 
-An original chess engine with trained neural evaluation for [AI Chessathon](https://aichessathon.com),
-maintained by Miles Rack. The submission contains the engine source, trained weights, opening book and endgame tables;
-the harness comes from
-[Advit Arora's starter](https://github.com/advitrocks9/aichessathon-starter).
+A chess engine built for [AI Chessathon](https://aichessathon.com), with Numba-compiled
+search and a neural evaluator trained from scratch in PyTorch.
 
-```sh
-git clone https://github.com/milesrack/aichessathon.git
-cd aichessathon
-make setup
-make gate
-make play
-```
+## How it works
 
-Requires [uv](https://docs.astral.sh/uv/). Python is pinned to 3.12. The lockfile includes the
-competition's supported packages; this engine uses NumPy, Numba, `python-chess` and the standard
-library.
+`agent.get_move(fen, time_left_ms)` takes a position and remaining clock time, then returns
+a legal UCI move such as `e2e4`.
 
-This branch contains an **unsubmitted candidate**. Its full-clock comparison
-was 3 wins, 1 draw and 4 losses; an improvement over v5 is not established.
-See [delivery status and evidence](docs/final-build.md).
+1. **Restore history.** Parse the FEN with `python-chess` and reconstruct the opponent's move
+   when possible, preserving repetition history between calls.
+2. **Try prepared moves.** Probe three- and four-piece Syzygy endgames, then the Polyglot
+   opening book through move 20. Missing coverage and draw-sensitive boundaries fall back
+   to search.
+3. **Search deeper.** Iterative deepening runs principal variation search with alpha–beta
+   bounds. A transposition table reuses previous results; captures, killer moves and quiet-move
+   history guide move ordering. Guarded null-move pruning skips unpromising branches.
+4. **Resolve tactics.** Quiescence extends leaf positions through captures, promotions and
+   check evasions, while retaining stalemate and draw detection.
+5. **Evaluate positions.** Tapered material, piece-square, pawn-structure and king-shelter
+   terms form the classical score. A neural evaluator adds a correction bounded to ±200
+   centipawns.
+6. **Return within budget.** The clock limits new iterations and is checked during search.
+   An interrupted search restores board state and returns the last completed iteration's
+   move, with a legal fallback if no iteration finishes.
 
-## Engine
+### Compiled search
 
-The platform imports `agent.py` and calls:
+Move generation, reversible board updates, evaluation and search run in Numba over fixed
+NumPy buffers. The board uses a 0x88 layout: sixteen-slot rows make off-board detection
+cheap. Weights load and search compilation runs at import; game state persists between moves.
 
-```python
-def get_move(fen: str, time_left_ms: int) -> str:
-    ...  # Return a legal UCI move, such as "e2e4" or "e7e8q".
-```
+### Neural evaluator
 
-The engine implements:
+Trained from random weights in PyTorch on **832,883 quiet positions**, with **94,083 held
+out**, from the Lichess evaluation export. Shared 32-dimensional piece-square embeddings
+are summed for each side's perspective, passed through ReLU and subtracted before producing
+the bounded correction. Numba evaluates the exported weights during play, updating cached
+feature sums only for changed pieces. See [training](training/README.md) for reproduction.
 
-- A local opening book through move 20 and three- and four-piece Syzygy endgames,
-  with legality, repetition and draw-counter guards. See [the final-build record](docs/final-build.md).
-- Iterative deepening with principal variation search and alpha–beta bounds.
-- Original move generation, reversible board updates, evaluation and recursive search compiled
-  by Numba. The board uses sixteen-slot rows with off-board padding.
-- Quiescence search with check evasions, captures and all promotion choices.
-- Tactical leaf generation with a separate stalemate check, and guarded null-move
-  pruning in narrow search windows. Synthetic positions are isolated from game-score caches.
-- A bounded transposition table, capture ordering, killer moves and quiet-move history.
-- Tapered material and piece-square evaluation, pawn structure, passed pawns, rook files,
-  bishop pairs and king shelter, plus a trained residual evaluator. Cached feature sums
-  avoid recomputing the entire network at each evaluated position.
-- Opponent-move reconstruction to retain repetition history between calls. Cached scores check
-  position and reversible-history hashes, halfmove count and game ply.
-- A soft budget for starting another iteration and a deadline checked every 256 search nodes.
-  Interrupted searches restore the board and retain the last completed move; very short
-  clocks use a legal fallback.
+## Setup and usage
 
-Search runs inside `get_move`. There are no background workers, runtime downloads, external
-engines or position-score lookup data. Weights load and compilation runs at import using the
-same signatures used during play. `python-chess` parses incoming positions, reconstructs history and checks
-the chosen root move; the search itself stays in compiled code. The model was trained from
-random weights in PyTorch and exported for Numba inference. See [training](training/README.md).
-
-## Verification
+Requires [uv](https://docs.astral.sh/uv/). Python 3.12 and dependencies are pinned.
 
 ```sh
-make test                 # Search, draw handling, special moves and interruption checks
-make gate                 # Ruff, strict mypy, tests and two fast games against random
-make play                 # One game against greedy at 120 s + 0.5 s
-make arena                # Sixteen paired games against greedy at 10 s + 0.1 s
-make zip                  # Build agent.zip and play two short games from its contents
+make setup   # Install dependencies
+make test    # Run correctness tests
+make gate    # Lint, type-check, test and play two verification games
+make play    # Play against the greedy baseline
+make arena   # Run a 16-game comparison
+make zip     # Package agent.zip and smoke-test its contents
 ```
 
-For the stronger supplied baseline:
+## Documentation
 
-```sh
-uv run python -m harness.arena --opponent baselines/minimax --games 16 --pgn-dir games
-uv run python -m harness.arena --opponent baselines/minimax --games 2 \
-  --base-ms 120000 --increment-ms 500 --pgn-dir games-full
-```
+- [Training](training/README.md): dataset preparation and evaluator training.
+- [Evaluator experiments](docs/evaluator-research.md): models and search comparisons.
+- [Rated-game review](docs/rated-game-review.md): game analysis and search improvements.
+- [Rejected candidates](docs/iteration-2026-09-10.md): king-safety and check-extension tests.
+- [Opening book and endgames](docs/final-build.md): asset preparation and validation.
 
-On 7–8 September 2026, the neural candidate scored **10 wins, three draws and three losses**
-against the submitted compiled engine at `a3c1cd0`. Eight games used 3 s + 0.1 s; eight used
-10 s + 0.1 s from four additional openings. Every opening was played with both colours.
+## Acknowledgements
 
-A separate comparison against an improved classical search scored **10 wins, two draws and
-four losses** in 16 games at 10 s + 0.1 s. No game in either comparison failed through an
-illegal move, crash or clock overrun. These are local results, not competition Elo or a
-measurement on the platform CPU. See [the research record](docs/evaluator-research.md).
-
-Correctness checks include standard perft totals, move generation and state transitions compared
-with `python-chess`, special moves, draw-sensitive cache use, mate distance, interrupted search
-and neural-cache agreement with full recomputation. Null-move checks cover interrupted state
-restoration, pawn endings, cache isolation and keeping speculative bounds outside mate scores.
-
-On 9 September, the guarded search candidate scored **11 wins, seven draws and six losses**
-against the submitted neural engine across 24 paired games: 16 at 3 s + 0.1 s and eight
-from different starting positions at 10 s + 0.1 s. An additional late-move reduction was
-not selected. The final 120 s + 0.5 s pair scored zero wins, one draw and one loss;
-the short-clock gain is not established at competition clocks. See [the rated-game review](docs/rated-game-review.md) for the evidence and limits.
-
-The harness reuses opening positions and seeded baseline tie-breaks. Our wall-clock search can
-finish at different depths between runs, so its results are not guaranteed to replay exactly.
-Rated opening positions are unpublished; the eight local openings are only a sample.
-
-## Packaging and platform rules
-
-`make zip` packages `agent.py`, `repertoire.py` and the contents of `weights/`.
-The packager also
-discovers root-level Python files, imported local packages and `weights/` when present. Keep scratch work
-in the ignored `.agents/` directory. Additional assets need an explicit `--include` argument.
-The smoke check extracts the archive and runs two short games from it.
-
-Read the current [agent contract](https://aichessathon.com/docs/agent-contract.md) and
-[competition rules](https://aichessathon.com/docs/rules.md) before submitting. The platform's
-validation log decides acceptance. The local harness reproduces the protocol and clock, but
-does not enforce the container's memory limit, read-only filesystem or network isolation.
-
-`harness/` is preserved from the starter. `baselines/` contains random, greedy, two-ply minimax
-and a variant with compiled evaluation. `tests/` covers engine invariants. `docs/IDEAS.md`
-contains the starter's engine-development guidance.
+Harness and baselines from [Advit Arora's starter](https://github.com/advitrocks9/aichessathon-starter).
 
 ## Licence
 
-[MIT](LICENSE). Copyright 2026 Advit Arora for the starter and Miles Rack for this fork's
-contributions. The original attribution and permission notice are retained.
+Licensed under the [MIT License](LICENSE).
